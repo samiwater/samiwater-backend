@@ -7,52 +7,65 @@ dotenv.config();
 
 const app = express();
 
-// Middlewares
-app.use(cors());
-app.use(express.json());
+/* ----------------------- Middlewares ----------------------- */
+app.use(
+  cors({
+    origin: "*", // اگر فقط دامنه خودت بود بعداً محدودش کن
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+app.use(express.json({ limit: "1mb" }));
 
-// ==== MongoDB connect ====
+/* --------------------- MongoDB connect --------------------- */
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) {
   console.error("❌ MONGODB_URI is missing. Put it in .env or Render env vars.");
 }
 mongoose
-  .connect(MONGODB_URI, { dbName: "samiwater" })
+  .connect(MONGODB_URI, {
+    dbName: "samiwater",
+    serverSelectionTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
+    retryWrites: true,
+  })
   .then(() => console.log("✅ MongoDB connected"))
   .catch((e) => console.error("❌ MongoDB error:", e.message));
 
-// ==== Models ====
+/* ------------------------- Models -------------------------- */
 // Customer
 const customerSchema = new mongoose.Schema(
   {
-    fullName: { type: String, required: true },
-    phone: { type: String, required: true, unique: true },
-    address: { type: String, required: true },
-    altPhone: { type: String },
+    fullName: { type: String, required: true, trim: true },
+    phone: { type: String, required: true, unique: true, trim: true },
+    address: { type: String, required: true, trim: true },
+    altPhone: { type: String, trim: true },
     birthdate: { type: Date }, // اختیاری
     joinedAt: { type: Date, default: () => new Date() }, // تاریخ عضویت
-    city: { type: String, default: "اصفهان" }
+    city: { type: String, default: "اصفهان", trim: true },
   },
   { timestamps: true }
 );
+customerSchema.index({ phone: 1 }, { unique: true });
 const Customer = mongoose.model("Customer", customerSchema);
 
 // Service Request
 const requestSchema = new mongoose.Schema(
   {
     customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
-    phone: { type: String, required: true },
-    address: { type: String, required: true },
-    sourcePath: { type: String, default: "web_form" }, // مسیر ثبت
-    issueType: { type: String, required: true }, // نوع مشکل/خدمت
+    phone: { type: String, required: true, trim: true },
+    address: { type: String, required: true, trim: true },
+    sourcePath: { type: String, default: "web_form", trim: true }, // مسیر ثبت
+    issueType: { type: String, required: true, trim: true }, // نوع مشکل/خدمت
     invoiceCode: { type: String, required: true, index: true }, // مثل ۴۰۵۰۱
-    createdAt: { type: Date, default: () => new Date() }
+    createdAt: { type: Date, default: () => new Date() },
   },
   { timestamps: true }
 );
+requestSchema.index({ invoiceCode: 1 }, { unique: true });
 const ServiceRequest = mongoose.model("ServiceRequest", requestSchema);
 
-// ==== Helpers ====
+/* ------------------------ Helpers ------------------------- */
 // تولید کُد فاکتور جلالی: [آخرِ رقم سال][ماهِ دو رقمی][سری ماه]
 async function generateInvoiceCode() {
   const now = new Date();
@@ -60,7 +73,7 @@ async function generateInvoiceCode() {
     new Intl.DateTimeFormat("en-US-u-ca-persian", {
       year: "numeric",
       month: "2-digit",
-      timeZone: "Asia/Tehran"
+      timeZone: "Asia/Tehran",
     })
       .formatToParts(now)
       .map((p) => [p.type, p.value])
@@ -71,7 +84,7 @@ async function generateInvoiceCode() {
 
   // آخرین کدِ همین ماه
   const latest = await ServiceRequest.findOne({
-    invoiceCode: new RegExp(`^${prefix}`)
+    invoiceCode: new RegExp(`^${prefix}`),
   })
     .sort({ invoiceCode: -1 })
     .lean();
@@ -85,25 +98,47 @@ async function generateInvoiceCode() {
   return `${prefix}${seqStr}`; // مثل 40501
 }
 
-// ==== Routes ====
+/* ------------------------- Routes ------------------------- */
+// صفحه اصلی
+app.get("/", (req, res) => {
+  res.send("SamiWater Backend is running ✅");
+});
+
 // سلامت
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, status: "SamiWater API is healthy" });
 });
 
-// صفحه اصلی
-app.get("/", (req, res) => {
-  res.send("SamiWater Backend is running ✅");
+// راهنمای سریع API
+app.get("/api", (req, res) => {
+  res.json({
+    message: "SamiWater API",
+    routes: {
+      health: "GET /api/health",
+      customers_list: "GET /api/customers",
+      customers_create: "POST /api/customers",
+      customer_by_phone: "GET /api/customers/phone/:phone",
+      requests_list: "GET /api/requests",
+      requests_create: "POST /api/requests",
+    },
+  });
 });
 
 // --- Customers ---
 // ساخت مشتری
 app.post("/api/customers", async (req, res) => {
   try {
-    const { fullName, phone, address, altPhone, birthdate, city } = req.body;
+    let { fullName, phone, address, altPhone, birthdate, city } = req.body;
     if (!fullName || !phone || !address) {
       return res.status(400).json({ error: "fullName, phone, address الزامی است." });
     }
+
+    // اگر birthdate رشته باشد، تبدیل به Date کن
+    if (birthdate && typeof birthdate === "string") {
+      const d = new Date(birthdate);
+      if (!isNaN(d.getTime())) birthdate = d;
+    }
+
     const exists = await Customer.findOne({ phone });
     if (exists) return res.status(409).json({ error: "این شماره قبلاً ثبت شده است." });
 
@@ -113,7 +148,7 @@ app.post("/api/customers", async (req, res) => {
       address,
       altPhone,
       birthdate,
-      city
+      city,
     });
     res.status(201).json(customer);
   } catch (e) {
@@ -155,7 +190,7 @@ app.post("/api/requests", async (req, res) => {
       address: customer.address,
       sourcePath: sourcePath || "web_form",
       issueType,
-      invoiceCode
+      invoiceCode,
     });
 
     res.status(201).json(reqDoc);
@@ -170,7 +205,19 @@ app.get("/api/requests", async (req, res) => {
   res.json(list);
 });
 
-// شروع سرور
+/* -------------------- 404 & Error handlers -------------------- */
+// 404 JSON بجای "Not Found" خام
+app.use((req, res, next) => {
+  res.status(404).json({ error: "Route not found", path: req.originalUrl });
+});
+
+// هندلر خطای سراسری
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "Internal server error" });
+});
+
+/* ---------------------- Start server ---------------------- */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("🚀 Server listening on", PORT);
