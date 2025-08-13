@@ -1,39 +1,177 @@
-// index.js
-require('dotenv').config();
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
+import express from "express";
+import mongoose from "mongoose";
+import cors from "cors";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
+
+// Middlewares
 app.use(cors());
 app.use(express.json());
 
-// اتصال به MongoDB
-const uri = process.env.MONGODB_URI;
-if (!uri) {
-  console.error('❌ MONGODB_URI در .env/Render تنظیم نشده');
-  process.exit(1);
+// ==== MongoDB connect ====
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+  console.error("❌ MONGODB_URI is missing. Put it in .env or Render env vars.");
 }
-mongoose.connect(uri).then(() => {
-  console.log('✅ MongoDB connected');
-}).catch(err => {
-  console.error('Mongo error:', err);
-  process.exit(1);
+mongoose
+  .connect(MONGODB_URI, { dbName: "samiwater" })
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch((e) => console.error("❌ MongoDB error:", e.message));
+
+// ==== Models ====
+// Customer
+const customerSchema = new mongoose.Schema(
+  {
+    fullName: { type: String, required: true },
+    phone: { type: String, required: true, unique: true },
+    address: { type: String, required: true },
+    altPhone: { type: String },
+    birthdate: { type: Date }, // اختیاری
+    joinedAt: { type: Date, default: () => new Date() }, // تاریخ عضویت
+    city: { type: String, default: "اصفهان" }
+  },
+  { timestamps: true }
+);
+const Customer = mongoose.model("Customer", customerSchema);
+
+// Service Request
+const requestSchema = new mongoose.Schema(
+  {
+    customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
+    phone: { type: String, required: true },
+    address: { type: String, required: true },
+    sourcePath: { type: String, default: "web_form" }, // مسیر ثبت
+    issueType: { type: String, required: true }, // نوع مشکل/خدمت
+    invoiceCode: { type: String, required: true, index: true }, // مثل ۴۰۵۰۱
+    createdAt: { type: Date, default: () => new Date() }
+  },
+  { timestamps: true }
+);
+const ServiceRequest = mongoose.model("ServiceRequest", requestSchema);
+
+// ==== Helpers ====
+// تولید کُد فاکتور جلالی: [آخرِ رقم سال][ماهِ دو رقمی][سری ماه]
+async function generateInvoiceCode() {
+  const now = new Date();
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US-u-ca-persian", {
+      year: "numeric",
+      month: "2-digit",
+      timeZone: "Asia/Tehran"
+    })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value])
+  );
+  const lastDigitOfYear = parts.year.slice(-1); // مثلا 1404 -> "4"
+  const month2 = parts.month; // "05"
+  const prefix = `${lastDigitOfYear}${month2}`; // "405"
+
+  // آخرین کدِ همین ماه
+  const latest = await ServiceRequest.findOne({
+    invoiceCode: new RegExp(`^${prefix}`)
+  })
+    .sort({ invoiceCode: -1 })
+    .lean();
+
+  let seq = 1;
+  if (latest) {
+    const prevSeq = parseInt(latest.invoiceCode.slice(prefix.length), 10);
+    if (!isNaN(prevSeq)) seq = prevSeq + 1;
+  }
+  const seqStr = String(seq).padStart(2, "0"); // 01, 02, ...
+  return `${prefix}${seqStr}`; // مثل 40501
+}
+
+// ==== Routes ====
+// سلامت
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, status: "SamiWater API is healthy" });
 });
 
-// روت‌ها
-app.get('/', (req, res) => {
-  res.send('SamiWater Backend is running ✅');
+// صفحه اصلی
+app.get("/", (req, res) => {
+  res.send("SamiWater Backend is running ✅");
 });
 
-app.use('/api/customers', require('./routes/customers'));
-app.use('/api/requests', require('./routes/requests'));
+// --- Customers ---
+// ساخت مشتری
+app.post("/api/customers", async (req, res) => {
+  try {
+    const { fullName, phone, address, altPhone, birthdate, city } = req.body;
+    if (!fullName || !phone || !address) {
+      return res.status(400).json({ error: "fullName, phone, address الزامی است." });
+    }
+    const exists = await Customer.findOne({ phone });
+    if (exists) return res.status(409).json({ error: "این شماره قبلاً ثبت شده است." });
 
-// هندل خطا
-app.use((err, req, res, next) => {
-  console.error('Unhandled:', err);
-  res.status(500).json({ ok:false, message:'Server error' });
+    const customer = await Customer.create({
+      fullName,
+      phone,
+      address,
+      altPhone,
+      birthdate,
+      city
+    });
+    res.status(201).json(customer);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Server on ${PORT}`));
+// لیست مشتری‌ها
+app.get("/api/customers", async (req, res) => {
+  const list = await Customer.find().sort({ createdAt: -1 }).lean();
+  res.json(list);
+});
+
+// دریافت مشتری با شماره
+app.get("/api/customers/phone/:phone", async (req, res) => {
+  const c = await Customer.findOne({ phone: req.params.phone }).lean();
+  if (!c) return res.status(404).json({ error: "مشتری پیدا نشد." });
+  res.json(c);
+});
+
+// --- Requests ---
+// ثبت درخواست خدمت (از روی مشتریِ موجود)
+app.post("/api/requests", async (req, res) => {
+  try {
+    const { phone, issueType, sourcePath } = req.body;
+    if (!phone || !issueType) {
+      return res.status(400).json({ error: "phone و issueType الزامی است." });
+    }
+
+    const customer = await Customer.findOne({ phone });
+    if (!customer) {
+      return res.status(404).json({ error: "ابتدا مشتری با این شماره ثبت شود." });
+    }
+
+    const invoiceCode = await generateInvoiceCode();
+    const reqDoc = await ServiceRequest.create({
+      customer: customer._id,
+      phone: customer.phone,
+      address: customer.address,
+      sourcePath: sourcePath || "web_form",
+      issueType,
+      invoiceCode
+    });
+
+    res.status(201).json(reqDoc);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// لیست درخواست‌ها
+app.get("/api/requests", async (req, res) => {
+  const list = await ServiceRequest.find().sort({ createdAt: -1 }).lean();
+  res.json(list);
+});
+
+// شروع سرور
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("🚀 Server listening on", PORT);
+});
