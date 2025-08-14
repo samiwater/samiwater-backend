@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ورود | SamiWater</title>
+<style>
+body{margin:0;font-family:tahoma,arial;background:#0f3b2d;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{width:min(420px,100%);background:#0d3426;border:1px solid #2e5a48;border-radius:14px;padding:18px}
+h1{margin:6px 0 14px;font-size:18px}
+input,button{width:100%;padding:12px;border-radius:10px;border:1px solid #2e5a48;font-size:16px}
+input{background:#0b2d23;color:#fff;margin:8px 0}
+button{background:#e2c15a;color:#1b2d23;font-weight:bold}
+.msg{margin-top:8px;font-size:12px;color:#dfeee8}
+.err{color:#ffc6c6}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>ورود با شماره موبایل</h1>
+
+  <input id="phone" placeholder="0913..." inputmode="numeric">
+  <!-- پین ادمین؛ برای کاربران عادی خالی بگذارند -->
+  <input id="pin" placeholder="پین ۴ رقمی ادمین (اختیاری)" inputmode="numeric" maxlength="4">
+
+  <button id="send">ارسال کد</button>
+  <div class="msg" id="m1"></div>
+
+  <div id="step2" style="display:none">
+    <input id="code" placeholder="کد ۶ رقمی" inputmode="numeric">
+    <button id="verify">تایید و ورود</button>
+    <div class="msg" id="m2"></div>
+  </div>
+</div>
+
+<script>
+const API = location.origin.replace(/\/$/,'');
+function onlyDigits(s){return String(s||"").replace(/\D/g,'')}
+
+document.getElementById("send").onclick = async ()=>{
+  const phone = onlyDigits(document.getElementById("phone").value);
+  const pin   = onlyDigits(document.getElementById("pin").value); // اگر ادمین باشی لازمه
+  const m1 = document.getElementById("m1");
+  m1.textContent = ""; m1.className="msg";
+  if(!/^09\d{9}$/.test(phone)){ m1.textContent="شماره نامعتبر"; m1.className="msg err"; return; }
+
+  const r = await fetch(API+"/api/auth/request-otp",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({phone, pin})
+  });
+  const j = await r.json();
+  if(!r.ok){
+    m1.textContent = (j.error==="INVALID_ADMIN_PIN") ? "پین ادمین نادرست است." : (j.error||"خطا");
+    m1.className="msg err"; return;
+  }
+  m1.textContent = "کد ارسال شد."+(j.dev_code?(" (dev: "+j.dev_code+")"):"");
+  document.getElementById("step2").style.display="block";
+};
+
+document.getElementById("verify").onclick = async ()=>{
+  const phone = onlyDigits(document.getElementById("phone").value);
+  const code  = onlyDigits(document.getElementById("code").value);
+  const m2 = document.getElementById("m2");
+  m2.textContent=""; m2.className="msg";
+
+  const r = await fetch(API+"/api/auth/verify-otp",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({phone, code})
+  });
+  const j = await r.json();
+  if(!r.ok){ m2.textContent=j.error||"کد نادرست"; m2.className="msg err"; return; }
+
+  localStorage.setItem("sami_token", j.token);
+  localStorage.setItem("sami_role", j.role);
+  if(j.role==="admin") location.href="/admin.html";
+  else location.href="/my.html"; // صفحه سوابق مشتری (بعداً می‌سازیم)
+};
+</script>
+</body>
+</html>
