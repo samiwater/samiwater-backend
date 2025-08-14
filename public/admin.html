@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>پنل ادمین | SamiWater</title>
+<style>
+body{margin:0;font-family:tahoma,arial;background:#0f3b2d;color:#fff}
+.top{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0d3426;border-bottom:1px solid #2e5a48}
+h1{font-size:18px;margin:0}
+.wrap{padding:16px;display:grid;gap:16px}
+.card{background:#0d3426;border:1px solid #2e5a48;border-radius:12px;padding:12px}
+label{font-size:13px;color:#dfeee8}
+input,select,button{padding:8px 10px;border-radius:10px;border:1px solid #2e5a48;background:#0b2d23;color:#fff}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th,td{border-bottom:1px solid #245541;padding:8px;text-align:right;font-size:13px}
+.actions{display:flex;gap:6px;align-items:center}
+.small{font-size:12px;color:#cfe0d9}
+.btn{background:#e2c15a;color:#1b2d23;font-weight:bold;border:0}
+.err{color:#ffc6c6}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>پنل ادمین</h1>
+  <div class="small" id="me"></div>
+</div>
+
+<div class="wrap">
+  <div class="card">
+    <div class="small">تست دسترسی ادمین:</div>
+    <div id="adminPing" class="small"></div>
+  </div>
+
+  <div class="card">
+    <div class="small">تغییر وضعیت درخواست با کد فاکتور</div>
+    <div class="actions">
+      <input id="inv" placeholder="مثلاً 40501">
+      <select id="status">
+        <option value="open">open</option>
+        <option value="in_progress">in_progress</option>
+        <option value="completed">completed</option>
+        <option value="cancelled">cancelled</option>
+      </select>
+      <button class="btn" id="do">اعمال</button>
+    </div>
+    <div id="statMsg" class="small"></div>
+  </div>
+
+  <div class="card">
+    <div class="small">لیست آخرین درخواست‌ها</div>
+    <table id="reqTable">
+      <thead><tr><th>کد</th><th>شماره</th><th>وضعیت</th><th>مسیر</th><th>نوع</th><th>ایجاد</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="small">لیست مشتری‌ها</div>
+    <table id="cusTable">
+      <thead><tr><th>نام</th><th>شماره</th><th>شهر</th><th>عضویت</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const API = location.origin.replace(/\/$/,'');
+const token = localStorage.getItem("sami_token")||"";
+const role  = localStorage.getItem("sami_role")||"";
+
+if(!token || role!=="admin"){ location.href="/admin-login.html"; }
+
+function authFetch(url, opts={}){
+  opts.headers = Object.assign({}, opts.headers||{}, {"Authorization":"Bearer "+token, "Content-Type":"application/json"});
+  return fetch(url, opts);
+}
+
+(async function init(){
+  // من
+  const me = await authFetch(API+"/api/me").then(r=>r.json()).catch(()=>({}));
+  document.getElementById("me").textContent = me.ok ? (`${me.phone} (${me.role})`) : "login?";
+
+  // تست ادمین
+  const ping = await authFetch(API+"/api/admin/ping").then(r=>r.json()).catch(()=>({}));
+  document.getElementById("adminPing").textContent = ping.ok ? "OK" : "NO";
+
+  // لیست درخواست‌ها
+  const reqs = await authFetch(API+"/api/requests").then(r=>r.json()).catch(()=>[]);
+  const rtb = document.querySelector("#reqTable tbody"); rtb.innerHTML="";
+  (reqs||[]).forEach(x=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML = `<td>${x.invoiceCode}</td><td>${x.phone}</td><td>${x.status}</td><td>${x.sourcePath}</td><td>${x.issueType}</td><td>${new Date(x.createdAt).toLocaleString("fa-IR")}</td>`;
+    rtb.appendChild(tr);
+  });
+
+  // لیست مشتری‌ها
+  const cus = await authFetch(API+"/api/customers").then(r=>r.json()).catch(()=>[]);
+  const ctb = document.querySelector("#cusTable tbody"); ctb.innerHTML="";
+  (cus||[]).forEach(x=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML = `<td>${x.fullName||"-"}</td><td>${x.phone}</td><td>${x.city||"-"}</td><td>${new Date(x.joinedAt||x.createdAt).toLocaleDateString("fa-IR")}</td>`;
+    ctb.appendChild(tr);
+  });
+})();
+
+document.getElementById("do").onclick = async ()=>{
+  const inv = document.getElementById("inv").value.trim();
+  const st  = document.getElementById("status").value;
+  const m   = document.getElementById("statMsg");
+  m.textContent = "";
+  if(!inv){ m.textContent="کد فاکتور را بزن!"; m.className="small err"; return; }
+  const r = await authFetch(API+"/api/requests/"+encodeURIComponent(inv)+"/status", {
+    method:"PATCH", body: JSON.stringify({ status: st })
+  });
+  const j = await r.json();
+  if(!r.ok){ m.textContent = j.error||"خطا"; m.className="small err"; return; }
+  m.textContent = "بروزرسانی شد.";
+  m.className="small";
+};
+</script>
+</body>
+</html>
