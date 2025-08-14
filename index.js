@@ -10,7 +10,7 @@ const app = express();
 /* ----------------------- Middlewares ----------------------- */
 app.use(
   cors({
-    origin: "*", // اگر فقط دامنه خودت بود بعداً محدودش کن
+    origin: "*", // بعداً می‌تونی محدودش کنی
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -37,32 +37,30 @@ mongoose
 const customerSchema = new mongoose.Schema(
   {
     fullName: { type: String, required: true, trim: true },
-    phone: { type: String, required: true, unique: true, trim: true },
+    phone:   { type: String, required: true, unique: true, trim: true }, // unique همینجا کافیست
     address: { type: String, required: true, trim: true },
-    altPhone: { type: String, trim: true },
-    birthdate: { type: Date }, // اختیاری
-    joinedAt: { type: Date, default: () => new Date() }, // تاریخ عضویت
-    city: { type: String, default: "اصفهان", trim: true },
+    altPhone:{ type: String, trim: true },
+    birthdate:{ type: Date }, // اختیاری
+    joinedAt:{ type: Date, default: () => new Date() }, // تاریخ عضویت
+    city:    { type: String, default: "اصفهان", trim: true },
   },
   { timestamps: true }
 );
-customerSchema.index({ phone: 1 }, { unique: true });
 const Customer = mongoose.model("Customer", customerSchema);
 
 // Service Request
 const requestSchema = new mongoose.Schema(
   {
-    customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
-    phone: { type: String, required: true, trim: true },
-    address: { type: String, required: true, trim: true },
+    customer:   { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
+    phone:      { type: String, required: true, trim: true },
+    address:    { type: String, required: true, trim: true },
     sourcePath: { type: String, default: "web_form", trim: true }, // مسیر ثبت
-    issueType: { type: String, required: true, trim: true }, // نوع مشکل/خدمت
-    invoiceCode: { type: String, required: true, index: true }, // مثل ۴۰۵۰۱
-    createdAt: { type: Date, default: () => new Date() },
+    issueType:  { type: String, required: true, trim: true },      // نوع مشکل/خدمت
+    invoiceCode:{ type: String, required: true, unique: true },    // یکتا؛ دیگه index جدا نمی‌زنیم
+    createdAt:  { type: Date, default: () => new Date() },
   },
   { timestamps: true }
 );
-requestSchema.index({ invoiceCode: 1 }, { unique: true });
 const ServiceRequest = mongoose.model("ServiceRequest", requestSchema);
 
 /* ------------------------ Helpers ------------------------- */
@@ -109,12 +107,26 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, status: "SamiWater API is healthy" });
 });
 
+// تست اتصال به دیتابیس (برای ساده‌سازی دیباگ)
+const dbTestHandler = async (req, res) => {
+  try {
+    // اگر اتصال برقرار نباشه اینجا خطا می‌خوریم
+    await mongoose.connection.db.admin().ping();
+    res.json({ ok: true, message: "Database connected successfully!" });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: "Database connection failed", details: String(error) });
+  }
+};
+app.get("/test", dbTestHandler);
+app.get("/api/test", dbTestHandler);
+
 // راهنمای سریع API
 app.get("/api", (req, res) => {
   res.json({
     message: "SamiWater API",
     routes: {
       health: "GET /api/health",
+      test: "GET /api/test",
       customers_list: "GET /api/customers",
       customers_create: "POST /api/customers",
       customer_by_phone: "GET /api/customers/phone/:phone",
@@ -206,12 +218,10 @@ app.get("/api/requests", async (req, res) => {
 });
 
 /* -------------------- 404 & Error handlers -------------------- */
-// 404 JSON بجای "Not Found" خام
 app.use((req, res, next) => {
   res.status(404).json({ error: "Route not found", path: req.originalUrl });
 });
 
-// هندلر خطای سراسری
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
