@@ -10,7 +10,7 @@ const app = express();
 /* ----------------------- Middlewares ----------------------- */
 app.use(
   cors({
-    origin: "*", // بعداً می‌تونی محدودش کنی
+    origin: "*",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -33,34 +33,43 @@ mongoose
   .catch((e) => console.error("❌ MongoDB error:", e.message));
 
 /* ------------------------- Models -------------------------- */
-// Customer
+// Customer (با تاریخ تولد شمسی ۳ بخشی)
 const customerSchema = new mongoose.Schema(
   {
     fullName: { type: String, required: true, trim: true },
-    phone:   { type: String, required: true, unique: true, trim: true }, // unique همینجا کافیست
+    phone: { type: String, required: true, unique: true, trim: true },
     address: { type: String, required: true, trim: true },
-    altPhone:{ type: String, trim: true },
-    birthdate:{ type: Date }, // اختیاری
-    joinedAt:{ type: Date, default: () => new Date() }, // تاریخ عضویت
-    city:    { type: String, default: "اصفهان", trim: true },
+    altPhone: { type: String, trim: true },
+
+    // تاریخ تولد شمسی: سه پارامتر جدا برای جست‌وجوهای بعدی
+    birthJY: { type: Number, min: 1300, max: 1500 }, // سال شمسی
+    birthJM: { type: Number, min: 1, max: 12 },      // ماه شمسی
+    birthJD: { type: Number, min: 1, max: 31 },      // روز شمسی
+
+    joinedAt: { type: Date, default: () => new Date() },
+    city: { type: String, default: "اصفهان", trim: true },
   },
   { timestamps: true }
 );
+customerSchema.index({ phone: 1 }, { unique: true });
+customerSchema.index({ birthJM: 1, birthJD: 1 }); // برای پیدا کردن تبریک‌های ماه/روز
 const Customer = mongoose.model("Customer", customerSchema);
 
 // Service Request
 const requestSchema = new mongoose.Schema(
   {
-    customer:   { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
-    phone:      { type: String, required: true, trim: true },
-    address:    { type: String, required: true, trim: true },
-    sourcePath: { type: String, default: "web_form", trim: true }, // مسیر ثبت
-    issueType:  { type: String, required: true, trim: true },      // نوع مشکل/خدمت
-    invoiceCode:{ type: String, required: true, unique: true },    // یکتا؛ دیگه index جدا نمی‌زنیم
-    createdAt:  { type: Date, default: () => new Date() },
+    customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
+    phone: { type: String, required: true, trim: true },
+    address: { type: String, required: true, trim: true },
+    sourcePath: { type: String, default: "web_form", trim: true }, // مسیر ثبت (مثلاً urgent/landing/web_form)
+    issueType: { type: String, required: true, trim: true }, // نوع خدمت/مسیر
+    invoiceCode: { type: String, required: true, index: true }, // مثل 40501
+    createdAt: { type: Date, default: () => new Date() },
   },
   { timestamps: true }
 );
+requestSchema.index({ phone: 1, sourcePath: 1, createdAt: -1 });
+requestSchema.index({ invoiceCode: 1 }, { unique: true });
 const ServiceRequest = mongoose.model("ServiceRequest", requestSchema);
 
 /* ------------------------ Helpers ------------------------- */
@@ -76,9 +85,9 @@ async function generateInvoiceCode() {
       .formatToParts(now)
       .map((p) => [p.type, p.value])
   );
-  const lastDigitOfYear = parts.year.slice(-1); // مثلا 1404 -> "4"
-  const month2 = parts.month; // "05"
-  const prefix = `${lastDigitOfYear}${month2}`; // "405"
+  const lastDigitOfYear = parts.year.slice(-1); // 1404 -> "4"
+  const month2 = parts.month;                   // "05"
+  const prefix = `${lastDigitOfYear}${month2}`; // "45" -> مثل "45"
 
   // آخرین کدِ همین ماه
   const latest = await ServiceRequest.findOne({
@@ -107,31 +116,17 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, status: "SamiWater API is healthy" });
 });
 
-// تست اتصال به دیتابیس (برای ساده‌سازی دیباگ)
-const dbTestHandler = async (req, res) => {
-  try {
-    // اگر اتصال برقرار نباشه اینجا خطا می‌خوریم
-    await mongoose.connection.db.admin().ping();
-    res.json({ ok: true, message: "Database connected successfully!" });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: "Database connection failed", details: String(error) });
-  }
-};
-app.get("/test", dbTestHandler);
-app.get("/api/test", dbTestHandler);
-
 // راهنمای سریع API
 app.get("/api", (req, res) => {
   res.json({
     message: "SamiWater API",
     routes: {
       health: "GET /api/health",
-      test: "GET /api/test",
       customers_list: "GET /api/customers",
-      customers_create: "POST /api/customers",
+      customers_create: "POST /api/customers  {fullName, phone, address, altPhone?, city?, birthJY?, birthJM?, birthJD?}",
       customer_by_phone: "GET /api/customers/phone/:phone",
       requests_list: "GET /api/requests",
-      requests_create: "POST /api/requests",
+      requests_create: "POST /api/requests  {phone, issueType, sourcePath?}  // ضداسپم 24ساعته",
     },
   });
 });
@@ -140,27 +135,36 @@ app.get("/api", (req, res) => {
 // ساخت مشتری
 app.post("/api/customers", async (req, res) => {
   try {
-    let { fullName, phone, address, altPhone, birthdate, city } = req.body;
+    let { fullName, phone, address, altPhone, city, birthJY, birthJM, birthJD } = req.body;
+
     if (!fullName || !phone || !address) {
       return res.status(400).json({ error: "fullName, phone, address الزامی است." });
     }
 
-    // اگر birthdate رشته باشد، تبدیل به Date کن
-    if (birthdate && typeof birthdate === "string") {
-      const d = new Date(birthdate);
-      if (!isNaN(d.getTime())) birthdate = d;
+    // نرمال‌سازی ارقام
+    phone = String(phone).replace(/\D/g, "");
+    if (!/^09\d{9}$/.test(phone)) {
+      return res.status(400).json({ error: "فرمت شماره موبایل صحیح نیست." });
     }
 
     const exists = await Customer.findOne({ phone });
     if (exists) return res.status(409).json({ error: "این شماره قبلاً ثبت شده است." });
+
+    // پاکسازی مقادیر تولد (عدد معتبر یا undefined)
+    const toNum = (v) => (v === undefined || v === null || v === "" ? undefined : Number(v));
+    birthJY = toNum(birthJY);
+    birthJM = toNum(birthJM);
+    birthJD = toNum(birthJD);
 
     const customer = await Customer.create({
       fullName,
       phone,
       address,
       altPhone,
-      birthdate,
       city,
+      birthJY,
+      birthJM,
+      birthJD,
     });
     res.status(201).json(customer);
   } catch (e) {
@@ -176,23 +180,43 @@ app.get("/api/customers", async (req, res) => {
 
 // دریافت مشتری با شماره
 app.get("/api/customers/phone/:phone", async (req, res) => {
-  const c = await Customer.findOne({ phone: req.params.phone }).lean();
+  const phone = String(req.params.phone).replace(/\D/g, "");
+  const c = await Customer.findOne({ phone }).lean();
   if (!c) return res.status(404).json({ error: "مشتری پیدا نشد." });
   res.json(c);
 });
 
 // --- Requests ---
-// ثبت درخواست خدمت (از روی مشتریِ موجود)
+// ثبت درخواست خدمت (با **ضداسپم ۲۴ساعته** روی phone + sourcePath)
 app.post("/api/requests", async (req, res) => {
   try {
-    const { phone, issueType, sourcePath } = req.body;
-    if (!phone || !issueType) {
+    const { phone: rawPhone, issueType, sourcePath } = req.body;
+    if (!rawPhone || !issueType) {
       return res.status(400).json({ error: "phone و issueType الزامی است." });
     }
+
+    const phone = String(rawPhone).replace(/\D/g, "");
+    const src = (sourcePath || "web_form").toLowerCase();
 
     const customer = await Customer.findOne({ phone });
     if (!customer) {
       return res.status(404).json({ error: "ابتدا مشتری با این شماره ثبت شود." });
+    }
+
+    // ✅ ضداسپم: هر شماره از هر مسیر، یک درخواست در ۲۴ساعت
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const dup = await ServiceRequest.findOne({
+      phone,
+      sourcePath: src,
+      createdAt: { $gte: since },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (dup) {
+      return res
+        .status(429)
+        .json({ error: "در هر ۲۴ ساعت از این مسیر فقط یک درخواست می‌توانید ثبت کنید." });
     }
 
     const invoiceCode = await generateInvoiceCode();
@@ -200,7 +224,7 @@ app.post("/api/requests", async (req, res) => {
       customer: customer._id,
       phone: customer.phone,
       address: customer.address,
-      sourcePath: sourcePath || "web_form",
+      sourcePath: src,
       issueType,
       invoiceCode,
     });
@@ -221,7 +245,6 @@ app.get("/api/requests", async (req, res) => {
 app.use((req, res, next) => {
   res.status(404).json({ error: "Route not found", path: req.originalUrl });
 });
-
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
