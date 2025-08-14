@@ -33,43 +33,50 @@ mongoose
   .catch((e) => console.error("❌ MongoDB error:", e.message));
 
 /* ------------------------- Models -------------------------- */
-// Customer (با تاریخ تولد شمسی ۳ بخشی)
+// Customer
 const customerSchema = new mongoose.Schema(
   {
-    fullName: { type: String, required: true, trim: true },
-    phone: { type: String, required: true, unique: true, trim: true },
-    address: { type: String, required: true, trim: true },
-    altPhone: { type: String, trim: true },
-
-    // تاریخ تولد شمسی: سه پارامتر جدا برای جست‌وجوهای بعدی
-    birthJY: { type: Number, min: 1300, max: 1500 }, // سال شمسی
-    birthJM: { type: Number, min: 1, max: 12 },      // ماه شمسی
-    birthJD: { type: Number, min: 1, max: 31 },      // روز شمسی
-
-    joinedAt: { type: Date, default: () => new Date() },
-    city: { type: String, default: "اصفهان", trim: true },
+    fullName:  { type: String, required: true, trim: true },
+    phone:     { type: String, required: true, unique: true, trim: true },
+    address:   { type: String, required: true, trim: true },
+    altPhone:  { type: String, trim: true },
+    // تاریخ تولد (اختیاری) — اگر در فرانت سه‌بخشی (روز/ماه/سال) داری، می‌تونی یا این Date رو ست کنی،
+    // یا سه فیلد جداگانه هم در آینده اضافه کنیم.
+    birthdate: { type: Date },
+    joinedAt:  { type: Date, default: () => new Date() },
+    city:      { type: String, default: "اصفهان", trim: true },
   },
   { timestamps: true }
 );
-customerSchema.index({ phone: 1 }, { unique: true });
-customerSchema.index({ birthJM: 1, birthJD: 1 }); // برای پیدا کردن تبریک‌های ماه/روز
 const Customer = mongoose.model("Customer", customerSchema);
 
 // Service Request
 const requestSchema = new mongoose.Schema(
   {
-    customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
-    phone: { type: String, required: true, trim: true },
-    address: { type: String, required: true, trim: true },
-    sourcePath: { type: String, default: "web_form", trim: true }, // مسیر ثبت (مثلاً urgent/landing/web_form)
-    issueType: { type: String, required: true, trim: true }, // نوع خدمت/مسیر
-    invoiceCode: { type: String, required: true, index: true }, // مثل 40501
-    createdAt: { type: Date, default: () => new Date() },
+    customer:   { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
+    phone:      { type: String, required: true, trim: true },
+    address:    { type: String, required: true, trim: true },
+    sourcePath: { type: String, default: "web_form", trim: true }, // مسیر ثبت (مثل: landing / urgent / app / ...)
+    issueType:  { type: String, required: true, trim: true },      // نوع مشکل/خدمت
+    invoiceCode:{ type: String, required: true, unique: true },
+
+    // وضعیت درخواست
+    status: {
+      type: String,
+      enum: ["open", "in_progress", "completed", "cancelled"],
+      default: "open",
+      index: true,
+    },
+
+    // برای درخواستِ مجدد (follow-up) که به فاکتور قبلی مرتبط است:
+    isFollowUp:        { type: Boolean, default: false },
+    relatedToInvoice:  { type: String, default: null }, // کد فاکتور قبلی
+
+    createdAt:  { type: Date, default: () => new Date() },
   },
   { timestamps: true }
 );
-requestSchema.index({ phone: 1, sourcePath: 1, createdAt: -1 });
-requestSchema.index({ invoiceCode: 1 }, { unique: true });
+requestSchema.index({ phone: 1, status: 1 });
 const ServiceRequest = mongoose.model("ServiceRequest", requestSchema);
 
 /* ------------------------ Helpers ------------------------- */
@@ -85,9 +92,9 @@ async function generateInvoiceCode() {
       .formatToParts(now)
       .map((p) => [p.type, p.value])
   );
-  const lastDigitOfYear = parts.year.slice(-1); // 1404 -> "4"
-  const month2 = parts.month;                   // "05"
-  const prefix = `${lastDigitOfYear}${month2}`; // "45" -> مثل "45"
+  const lastDigitOfYear = parts.year.slice(-1); // مثلا 1404 -> "4"
+  const month2 = parts.month; // "05"
+  const prefix = `${lastDigitOfYear}${month2}`; // "405"
 
   // آخرین کدِ همین ماه
   const latest = await ServiceRequest.findOne({
@@ -105,6 +112,8 @@ async function generateInvoiceCode() {
   return `${prefix}${seqStr}`; // مثل 40501
 }
 
+const ACTIVE_STATUSES = ["open", "in_progress"]; // درخواستِ فعال (اجازه ثبتِ معمولی نمی‌دهیم)
+
 /* ------------------------- Routes ------------------------- */
 // صفحه اصلی
 app.get("/", (req, res) => {
@@ -116,55 +125,56 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, status: "SamiWater API is healthy" });
 });
 
+// تست اتصال به دیتابیس
+const dbTestHandler = async (req, res) => {
+  try {
+    await mongoose.connection.db.admin().ping();
+    res.json({ ok: true, message: "Database connected successfully!" });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: "Database connection failed", details: String(error) });
+  }
+};
+app.get("/test", dbTestHandler);
+app.get("/api/test", dbTestHandler);
+
 // راهنمای سریع API
 app.get("/api", (req, res) => {
   res.json({
     message: "SamiWater API",
     routes: {
       health: "GET /api/health",
+      test: "GET /api/test",
       customers_list: "GET /api/customers",
-      customers_create: "POST /api/customers  {fullName, phone, address, altPhone?, city?, birthJY?, birthJM?, birthJD?}",
+      customers_create: "POST /api/customers",
       customer_by_phone: "GET /api/customers/phone/:phone",
+
       requests_list: "GET /api/requests",
-      requests_create: "POST /api/requests  {phone, issueType, sourcePath?}  // ضداسپم 24ساعته",
+      requests_create: "POST /api/requests",
+      requests_active_by_phone: "GET /api/requests/active/:phone",
+      requests_update_status: "PATCH /api/requests/:invoiceCode/status",
     },
   });
 });
 
-// --- Customers ---
+/* ------------------------ Customers ------------------------ */
 // ساخت مشتری
 app.post("/api/customers", async (req, res) => {
   try {
-    let { fullName, phone, address, altPhone, city, birthJY, birthJM, birthJD } = req.body;
-
+    let { fullName, phone, address, altPhone, birthdate, city } = req.body;
     if (!fullName || !phone || !address) {
       return res.status(400).json({ error: "fullName, phone, address الزامی است." });
     }
 
-    // نرمال‌سازی ارقام
-    phone = String(phone).replace(/\D/g, "");
-    if (!/^09\d{9}$/.test(phone)) {
-      return res.status(400).json({ error: "فرمت شماره موبایل صحیح نیست." });
+    if (birthdate && typeof birthdate === "string") {
+      const d = new Date(birthdate);
+      if (!isNaN(d.getTime())) birthdate = d;
     }
 
     const exists = await Customer.findOne({ phone });
     if (exists) return res.status(409).json({ error: "این شماره قبلاً ثبت شده است." });
 
-    // پاکسازی مقادیر تولد (عدد معتبر یا undefined)
-    const toNum = (v) => (v === undefined || v === null || v === "" ? undefined : Number(v));
-    birthJY = toNum(birthJY);
-    birthJM = toNum(birthJM);
-    birthJD = toNum(birthJD);
-
     const customer = await Customer.create({
-      fullName,
-      phone,
-      address,
-      altPhone,
-      city,
-      birthJY,
-      birthJM,
-      birthJD,
+      fullName, phone, address, altPhone, birthdate, city,
     });
     res.status(201).json(customer);
   } catch (e) {
@@ -180,43 +190,78 @@ app.get("/api/customers", async (req, res) => {
 
 // دریافت مشتری با شماره
 app.get("/api/customers/phone/:phone", async (req, res) => {
-  const phone = String(req.params.phone).replace(/\D/g, "");
-  const c = await Customer.findOne({ phone }).lean();
+  const c = await Customer.findOne({ phone: req.params.phone }).lean();
   if (!c) return res.status(404).json({ error: "مشتری پیدا نشد." });
   res.json(c);
 });
 
-// --- Requests ---
-// ثبت درخواست خدمت (با **ضداسپم ۲۴ساعته** روی phone + sourcePath)
+/* ------------------------- Requests ------------------------ */
+
+// گرفتن درخواست فعال برای یک شماره (برای نمایش پیام به کاربر)
+app.get("/api/requests/active/:phone", async (req, res) => {
+  const phone = req.params.phone;
+  const active = await ServiceRequest.findOne({
+    phone,
+    status: { $in: ACTIVE_STATUSES },
+  }).sort({ createdAt: -1 }).lean();
+
+  if (!active) return res.json({ ok: true, active: null });
+  res.json({
+    ok: true,
+    active: {
+      invoiceCode: active.invoiceCode,
+      status: active.status,
+      createdAt: active.createdAt,
+      sourcePath: active.sourcePath,
+      issueType: active.issueType,
+    },
+  });
+});
+
+// ثبت درخواست خدمت
+// منطق:
+// - اگر کاربر «follow-up» می‌فرستد (relatedToInvoice + isFollowUp=true) => اجازه ثبت می‌دهیم.
+// - در غیر این صورت: اگر همین شماره درخواست فعال دارد => 409 برمی‌گردانیم.
 app.post("/api/requests", async (req, res) => {
   try {
-    const { phone: rawPhone, issueType, sourcePath } = req.body;
-    if (!rawPhone || !issueType) {
+    const { phone, issueType, sourcePath, isFollowUp, relatedToInvoice } = req.body;
+    if (!phone || !issueType) {
       return res.status(400).json({ error: "phone و issueType الزامی است." });
     }
-
-    const phone = String(rawPhone).replace(/\D/g, "");
-    const src = (sourcePath || "web_form").toLowerCase();
 
     const customer = await Customer.findOne({ phone });
     if (!customer) {
       return res.status(404).json({ error: "ابتدا مشتری با این شماره ثبت شود." });
     }
 
-    // ✅ ضداسپم: هر شماره از هر مسیر، یک درخواست در ۲۴ساعت
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const dup = await ServiceRequest.findOne({
-      phone,
-      sourcePath: src,
-      createdAt: { $gte: since },
-    })
-      .sort({ createdAt: -1 })
-      .lean();
+    // اگر فالوآپ نیست، چک کن درخواست فعال وجود نداشته باشد
+    if (!isFollowUp) {
+      const active = await ServiceRequest.findOne({
+        phone,
+        status: { $in: ACTIVE_STATUSES },
+      }).sort({ createdAt: -1 }).lean();
 
-    if (dup) {
-      return res
-        .status(429)
-        .json({ error: "در هر ۲۴ ساعت از این مسیر فقط یک درخواست می‌توانید ثبت کنید." });
+      if (active) {
+        return res.status(409).json({
+          error: "active_request_exists",
+          message:
+            "یک درخواست درحال انجام/تکمیل‌نشده دارید. لطفاً تا تعیین وضعیت صبر کنید یا با پشتیبانی تماس بگیرید.",
+          invoiceCode: active.invoiceCode,
+          status: active.status,
+        });
+      }
+    }
+
+    // اگر فالوآپ است، صحت relatedToInvoice را چک کن (اختیاری ولی بهتره)
+    let relatedOk = null;
+    if (isFollowUp && relatedToInvoice) {
+      relatedOk = await ServiceRequest.findOne({ invoiceCode: relatedToInvoice }).lean();
+      if (!relatedOk) {
+        return res.status(400).json({
+          error: "related_invoice_not_found",
+          message: "کد فاکتور قبلی معتبر نیست.",
+        });
+      }
     }
 
     const invoiceCode = await generateInvoiceCode();
@@ -224,12 +269,42 @@ app.post("/api/requests", async (req, res) => {
       customer: customer._id,
       phone: customer.phone,
       address: customer.address,
-      sourcePath: src,
+      sourcePath: sourcePath || "web_form",
       issueType,
       invoiceCode,
+      isFollowUp: Boolean(isFollowUp),
+      relatedToInvoice: relatedOk ? relatedOk.invoiceCode : relatedToInvoice || null,
+      status: "open",
     });
 
     res.status(201).json(reqDoc);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// تغییر وضعیت درخواست
+// PATCH /api/requests/:invoiceCode/status  body: { status: "completed" | "in_progress" | "cancelled" }
+app.patch("/api/requests/:invoiceCode/status", async (req, res) => {
+  try {
+    const { invoiceCode } = req.params;
+    const { status } = req.body;
+
+    if (!["open", "in_progress", "completed", "cancelled"].includes(status)) {
+      return res.status(400).json({ error: "وضعیت نامعتبر است." });
+    }
+
+    const updated = await ServiceRequest.findOneAndUpdate(
+      { invoiceCode },
+      { $set: { status } },
+      { new: true }
+    ).lean();
+
+    if (!updated) {
+      return res.status(404).json({ error: "درخواست با این کد پیدا نشد." });
+    }
+
+    res.json({ ok: true, request: updated });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -245,6 +320,7 @@ app.get("/api/requests", async (req, res) => {
 app.use((req, res, next) => {
   res.status(404).json({ error: "Route not found", path: req.originalUrl });
 });
+
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
