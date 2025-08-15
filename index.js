@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
+import smsTestRoute from "./smsTest.js"; // ⬅️ برای تست پیامک
 
 dotenv.config();
 
@@ -16,6 +17,9 @@ app.use(
   })
 );
 app.use(express.json({ limit: "1mb" }));
+
+/* ⬅️ فعال‌سازی روت تست SMS */
+app.use(smsTestRoute);
 
 /* --------------------- MongoDB connect --------------------- */
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -36,31 +40,27 @@ mongoose
 // Customer
 const customerSchema = new mongoose.Schema(
   {
-    fullName:  { type: String, required: true, trim: true },
-    phone:     { type: String, required: true, unique: true, trim: true },
-    address:   { type: String, required: true, trim: true },
-    altPhone:  { type: String, trim: true },
-    birthdate: { type: Date },
-    joinedAt:  { type: Date, default: () => new Date() },
-    city:      { type: String, default: "اصفهان", trim: true },
-    discountPercent: { type: Number, default: 0 }, // برای آینده
+    fullName: { type: String, required: true, trim: true },
+    phone:   { type: String, required: true, unique: true, trim: true },
+    address: { type: String, required: true, trim: true },
+    altPhone:{ type: String, trim: true },
+    birthdate:{ type: Date },
+    joinedAt:{ type: Date, default: () => new Date() },
+    city:    { type: String, default: "اصفهان", trim: true },
   },
   { timestamps: true }
 );
 const Customer = mongoose.model("Customer", customerSchema);
 
 // Service Request
-const ALLOWED_STATUSES = ["pending", "assigned", "done", "canceled"];
-
 const requestSchema = new mongoose.Schema(
   {
     customer:   { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
     phone:      { type: String, required: true, trim: true },
     address:    { type: String, required: true, trim: true },
-    sourcePath: { type: String, default: "web_form", trim: true }, // مسیر ثبت (ems یا services/...)
+    sourcePath: { type: String, default: "web_form", trim: true }, // مسیر ثبت
     issueType:  { type: String, required: true, trim: true },      // نوع مشکل/خدمت
-    invoiceCode:{ type: String, required: true, unique: true },    // کد پیگیری
-    status:     { type: String, enum: ALLOWED_STATUSES, default: "pending", index: true },
+    invoiceCode:{ type: String, required: true, unique: true },    // کُد فاکتور یکتا
     createdAt:  { type: Date, default: () => new Date() },
   },
   { timestamps: true }
@@ -68,7 +68,7 @@ const requestSchema = new mongoose.Schema(
 const ServiceRequest = mongoose.model("ServiceRequest", requestSchema);
 
 /* ------------------------ Helpers ------------------------- */
-// تولید کُد فاکتور جلالی: [آخرِ رقم سال][ماهِ دو رقمی][سری ماه]
+// تولید کُد فاکتور جلالی: [آخر رقم سال][ماه دو رقمی][سری ماه]
 async function generateInvoiceCode() {
   const now = new Date();
   const parts = Object.fromEntries(
@@ -80,11 +80,14 @@ async function generateInvoiceCode() {
       .formatToParts(now)
       .map((p) => [p.type, p.value])
   );
-  const lastDigitOfYear = parts.year.slice(-1);
-  const month2 = parts.month;
-  const prefix = `${lastDigitOfYear}${month2}`;
+  const lastDigitOfYear = parts.year.slice(-1); // مثلا 1404 -> "4"
+  const month2 = parts.month; // "05" یا "06"
+  const prefix = `${lastDigitOfYear}${month2}`; // "405" یا "406"
 
-  const latest = await ServiceRequest.findOne({ invoiceCode: new RegExp(`^${prefix}`) })
+  // آخرین کد همین ماه
+  const latest = await ServiceRequest.findOne({
+    invoiceCode: new RegExp(`^${prefix}`),
+  })
     .sort({ invoiceCode: -1 })
     .lean();
 
@@ -93,8 +96,8 @@ async function generateInvoiceCode() {
     const prevSeq = parseInt(latest.invoiceCode.slice(prefix.length), 10);
     if (!isNaN(prevSeq)) seq = prevSeq + 1;
   }
-  const seqStr = String(seq).padStart(2, "0");
-  return `${prefix}${seqStr}`;
+  const seqStr = String(seq).padStart(2, "0"); // 01, 02, ...
+  return `${prefix}${seqStr}`; // مثل 40501 یا 40601
 }
 
 /* ------------------------- Routes ------------------------- */
@@ -108,7 +111,7 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, status: "SamiWater API is healthy" });
 });
 
-// تست اتصال به دیتابیس
+// تست اتصال DB
 const dbTestHandler = async (req, res) => {
   try {
     await mongoose.connection.db.admin().ping();
@@ -120,7 +123,7 @@ const dbTestHandler = async (req, res) => {
 app.get("/test", dbTestHandler);
 app.get("/api/test", dbTestHandler);
 
-// راهنمای سریع
+// راهنمای سریع API
 app.get("/api", (req, res) => {
   res.json({
     message: "SamiWater API",
@@ -132,12 +135,12 @@ app.get("/api", (req, res) => {
       customer_by_phone: "GET /api/customers/phone/:phone",
       requests_list: "GET /api/requests",
       requests_create: "POST /api/requests",
-      request_update_status: "PATCH /api/requests/:id {status}"
     },
   });
 });
 
 // --- Customers ---
+// ساخت مشتری
 app.post("/api/customers", async (req, res) => {
   try {
     let { fullName, phone, address, altPhone, birthdate, city } = req.body;
@@ -151,18 +154,22 @@ app.post("/api/customers", async (req, res) => {
     const exists = await Customer.findOne({ phone });
     if (exists) return res.status(409).json({ error: "این شماره قبلاً ثبت شده است." });
 
-    const customer = await Customer.create({ fullName, phone, address, altPhone, birthdate, city });
+    const customer = await Customer.create({
+      fullName, phone, address, altPhone, birthdate, city,
+    });
     res.status(201).json(customer);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+// لیست مشتری‌ها
 app.get("/api/customers", async (req, res) => {
   const list = await Customer.find().sort({ createdAt: -1 }).lean();
   res.json(list);
 });
 
+// دریافت مشتری با شماره
 app.get("/api/customers/phone/:phone", async (req, res) => {
   const c = await Customer.findOne({ phone: req.params.phone }).lean();
   if (!c) return res.status(404).json({ error: "مشتری پیدا نشد." });
@@ -170,6 +177,7 @@ app.get("/api/customers/phone/:phone", async (req, res) => {
 });
 
 // --- Requests ---
+// ثبت درخواست خدمت (از روی مشتریِ موجود)
 app.post("/api/requests", async (req, res) => {
   try {
     const { phone, issueType, sourcePath } = req.body;
@@ -190,7 +198,6 @@ app.post("/api/requests", async (req, res) => {
       sourcePath: sourcePath || "web_form",
       issueType,
       invoiceCode,
-      status: "pending",
     });
 
     res.status(201).json(reqDoc);
@@ -199,34 +206,17 @@ app.post("/api/requests", async (req, res) => {
   }
 });
 
+// لیست درخواست‌ها
 app.get("/api/requests", async (req, res) => {
   const list = await ServiceRequest.find().sort({ createdAt: -1 }).lean();
   res.json(list);
-});
-
-// ←← NEW: تغییر وضعیت درخواست
-app.patch("/api/requests/:id", async (req, res) => {
-  try {
-    const { status } = req.body;
-    if (!ALLOWED_STATUSES.includes(status)) {
-      return res.status(400).json({ error: "وضعیت نامعتبر است." });
-    }
-    const updated = await ServiceRequest.findByIdAndUpdate(
-      req.params.id,
-      { $set: { status } },
-      { new: true }
-    ).lean();
-    if (!updated) return res.status(404).json({ error: "درخواست پیدا نشد." });
-    res.json(updated);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
 });
 
 /* -------------------- 404 & Error handlers -------------------- */
 app.use((req, res, next) => {
   res.status(404).json({ error: "Route not found", path: req.originalUrl });
 });
+
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
