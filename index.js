@@ -33,33 +33,34 @@ mongoose
   .catch((e) => console.error("❌ MongoDB error:", e.message));
 
 /* ------------------------- Models -------------------------- */
-// مشتری
+// Customer
 const customerSchema = new mongoose.Schema(
   {
-    fullName: { type: String, required: true, trim: true },
-    phone:   { type: String, required: true, unique: true, trim: true },
-    address: { type: String, required: true, trim: true },
-    altPhone:{ type: String, trim: true },
-    birthdate:{ type: Date },
-    joinedAt:{ type: Date, default: () => new Date() },
-    city:    { type: String, default: "اصفهان", trim: true },
-    // درصد تخفیف
-    discountPercent: { type: Number, min: 0, max: 100, default: 0 },
+    fullName:  { type: String, required: true, trim: true },
+    phone:     { type: String, required: true, unique: true, trim: true },
+    address:   { type: String, required: true, trim: true },
+    altPhone:  { type: String, trim: true },
+    birthdate: { type: Date },
+    joinedAt:  { type: Date, default: () => new Date() },
+    city:      { type: String, default: "اصفهان", trim: true },
+    discountPercent: { type: Number, default: 0 }, // برای آینده
   },
   { timestamps: true }
 );
 const Customer = mongoose.model("Customer", customerSchema);
 
-// درخواست خدمت
+// Service Request
+const ALLOWED_STATUSES = ["pending", "assigned", "done", "canceled"];
+
 const requestSchema = new mongoose.Schema(
   {
     customer:   { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
     phone:      { type: String, required: true, trim: true },
     address:    { type: String, required: true, trim: true },
-    sourcePath: { type: String, default: "web_form", trim: true },
-    issueType:  { type: String, required: true, trim: true },
-    invoiceCode:{ type: String, required: true, unique: true },
-    status:     { type: String, enum: ["pending","assigned","done","canceled"], default: "pending" },
+    sourcePath: { type: String, default: "web_form", trim: true }, // مسیر ثبت (ems یا services/...)
+    issueType:  { type: String, required: true, trim: true },      // نوع مشکل/خدمت
+    invoiceCode:{ type: String, required: true, unique: true },    // کد پیگیری
+    status:     { type: String, enum: ALLOWED_STATUSES, default: "pending", index: true },
     createdAt:  { type: Date, default: () => new Date() },
   },
   { timestamps: true }
@@ -67,137 +68,76 @@ const requestSchema = new mongoose.Schema(
 const ServiceRequest = mongoose.model("ServiceRequest", requestSchema);
 
 /* ------------------------ Helpers ------------------------- */
-// تولید کُد فاکتور جلالی: [آخرین رقم سال][ماه دو رقمی][سری]
+// تولید کُد فاکتور جلالی: [آخرِ رقم سال][ماهِ دو رقمی][سری ماه]
 async function generateInvoiceCode() {
   const now = new Date();
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat("en-US-u-ca-persian", {
-      year: "numeric", month: "2-digit", timeZone: "Asia/Tehran",
-    }).formatToParts(now).map(p => [p.type, p.value])
+      year: "numeric",
+      month: "2-digit",
+      timeZone: "Asia/Tehran",
+    })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value])
   );
-  const prefix = `${parts.year.slice(-1)}${parts.month}`; // مثل 405
+  const lastDigitOfYear = parts.year.slice(-1);
+  const month2 = parts.month;
+  const prefix = `${lastDigitOfYear}${month2}`;
+
   const latest = await ServiceRequest.findOne({ invoiceCode: new RegExp(`^${prefix}`) })
-    .sort({ invoiceCode: -1 }).lean();
+    .sort({ invoiceCode: -1 })
+    .lean();
+
   let seq = 1;
   if (latest) {
-    const prev = parseInt(latest.invoiceCode.slice(prefix.length), 10);
-    if (!isNaN(prev)) seq = prev + 1;
+    const prevSeq = parseInt(latest.invoiceCode.slice(prefix.length), 10);
+    if (!isNaN(prevSeq)) seq = prevSeq + 1;
   }
-  return `${prefix}${String(seq).padStart(2,"0")}`; // 40501
+  const seqStr = String(seq).padStart(2, "0");
+  return `${prefix}${seqStr}`;
 }
 
-/* ------------------------- Routes: base ------------------------- */
-app.get("/", (_req, res) => res.send("SamiWater Backend is running ✅"));
-app.get("/api/health", (_req, res) => res.json({ ok: true, status: "SamiWater API is healthy" }));
+/* ------------------------- Routes ------------------------- */
+// صفحه اصلی
+app.get("/", (req, res) => {
+  res.send("SamiWater Backend is running ✅");
+});
 
-const dbTestHandler = async (_req, res) => {
+// سلامت
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, status: "SamiWater API is healthy" });
+});
+
+// تست اتصال به دیتابیس
+const dbTestHandler = async (req, res) => {
   try {
     await mongoose.connection.db.admin().ping();
     res.json({ ok: true, message: "Database connected successfully!" });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: "Database connection failed", details: String(e) });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: "Database connection failed", details: String(error) });
   }
 };
 app.get("/test", dbTestHandler);
 app.get("/api/test", dbTestHandler);
 
-app.get("/api", (_req, res) => {
+// راهنمای سریع
+app.get("/api", (req, res) => {
   res.json({
     message: "SamiWater API",
     routes: {
-      // auth
-      auth_start: "POST /api/auth/start",
-      auth_verify: "POST /api/auth/verify",
-      // public
+      health: "GET /api/health",
+      test: "GET /api/test",
       customers_list: "GET /api/customers",
       customers_create: "POST /api/customers",
       customer_by_phone: "GET /api/customers/phone/:phone",
       requests_list: "GET /api/requests",
       requests_create: "POST /api/requests",
-      // admin
-      admin_requests_list: "GET /api/admin/requests",
-      admin_requests_status: "PATCH /api/admin/requests/:id/status",
-      admin_customers_list: "GET /api/admin/customers",
-      admin_customer_discount: "PATCH /api/admin/customers/:id/discount",
-      admin_stats: "GET /api/admin/stats",
+      request_update_status: "PATCH /api/requests/:id {status}"
     },
   });
 });
 
-/* ------------------------- AUTH (2-step) ------------------------- */
-/**
- * مرحله ۱: شروع احراز هویت
- * بدنه: { phone: string, pin?: string }
- * - اگر phone == ADMIN_PHONE و pin == ADMIN_PIN => role=admin
- * - غیر از این => role=user
- * برای تست: کد تایید را همان TEST_OTP برمی‌گردانیم (ارسال پیامک واقعی فعلاً نداریم)
- */
-const ADMIN_PHONE = (process.env.ADMIN_PHONE || "").trim();
-const ADMIN_PIN   = (process.env.ADMIN_PIN || "").trim();
-const TEST_OTP    = (process.env.TEST_OTP || "111111").trim();
-
-app.post("/api/auth/start", async (req, res) => {
-  try {
-    const { phone, pin } = req.body || {};
-    if (!phone) return res.status(400).json({ ok: false, error: "phone الزامی است" });
-
-    // نقش پیش‌فرض
-    let role = "user";
-
-    // چک ادمین
-    if (ADMIN_PHONE && phone === ADMIN_PHONE) {
-      if (!ADMIN_PIN || pin === ADMIN_PIN) {
-        role = "admin";
-      } else {
-        return res.status(401).json({ ok: false, error: "PIN نادرست است" });
-      }
-    }
-
-    // وجود مشتری برای user (اختیاری — می‌تونی مجبورش کنی عضو باشد)
-    const exists = await Customer.findOne({ phone }).lean();
-    if (!exists && role === "user") {
-      // می‌تونیم اجازه بدیم ادامه بده و در verify بسازیم؛ فعلاً اجازه می‌دهیم.
-    }
-
-    return res.json({
-      ok: true,
-      role,
-      next: "verify",
-      // برای تست نمایش می‌دهیم؛ در نسخه نهایی این فیلد را حذف کن و پیامک واقعی بفرست.
-      devCode: TEST_OTP,
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-/**
- * مرحله ۲: تأیید کد
- * بدنه: { phone: string, code: string }
- * اگر code == TEST_OTP قبول می‌کنیم و یک توکن ساده برمی‌گردانیم.
- */
-app.post("/api/auth/verify", async (req, res) => {
-  try {
-    const { phone, code } = req.body || {};
-    if (!phone || !code) return res.status(400).json({ ok: false, error: "phone و code الزامی است" });
-
-    if (code !== TEST_OTP) {
-      return res.status(401).json({ ok: false, error: "کد تایید نادرست است" });
-    }
-
-    let role = "user";
-    if (ADMIN_PHONE && phone === ADMIN_PHONE) role = "admin";
-
-    // توکن ساده (فعلاً بدون JWT)
-    const token = `${role}-${phone}-${Date.now()}`;
-
-    return res.json({ ok: true, role, token });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-/* ---------------------- Public: Customers ---------------------- */
+// --- Customers ---
 app.post("/api/customers", async (req, res) => {
   try {
     let { fullName, phone, address, altPhone, birthdate, city } = req.body;
@@ -218,7 +158,7 @@ app.post("/api/customers", async (req, res) => {
   }
 });
 
-app.get("/api/customers", async (_req, res) => {
+app.get("/api/customers", async (req, res) => {
   const list = await Customer.find().sort({ createdAt: -1 }).lean();
   res.json(list);
 });
@@ -229,15 +169,18 @@ app.get("/api/customers/phone/:phone", async (req, res) => {
   res.json(c);
 });
 
-/* ---------------------- Public: Requests ---------------------- */
+// --- Requests ---
 app.post("/api/requests", async (req, res) => {
   try {
     const { phone, issueType, sourcePath } = req.body;
     if (!phone || !issueType) {
       return res.status(400).json({ error: "phone و issueType الزامی است." });
     }
+
     const customer = await Customer.findOne({ phone });
-    if (!customer) return res.status(404).json({ error: "ابتدا مشتری با این شماره ثبت شود." });
+    if (!customer) {
+      return res.status(404).json({ error: "ابتدا مشتری با این شماره ثبت شود." });
+    }
 
     const invoiceCode = await generateInvoiceCode();
     const reqDoc = await ServiceRequest.create({
@@ -249,73 +192,48 @@ app.post("/api/requests", async (req, res) => {
       invoiceCode,
       status: "pending",
     });
+
     res.status(201).json(reqDoc);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.get("/api/requests", async (_req, res) => {
+app.get("/api/requests", async (req, res) => {
   const list = await ServiceRequest.find().sort({ createdAt: -1 }).lean();
   res.json(list);
 });
 
-/* ---------------------- Admin: Requests ---------------------- */
-app.get("/api/admin/requests", async (req, res) => {
+// ←← NEW: تغییر وضعیت درخواست
+app.patch("/api/requests/:id", async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 100), 500);
-    const list = await ServiceRequest.find().sort({ createdAt: -1 }).limit(limit).lean();
-    res.json(list);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch("/api/admin/requests/:id/status", async (req, res) => {
-  try {
-    const { id } = req.params;
     const { status } = req.body;
-    if (!["pending","assigned","done","canceled"].includes(status)) {
+    if (!ALLOWED_STATUSES.includes(status)) {
       return res.status(400).json({ error: "وضعیت نامعتبر است." });
     }
-    const updated = await ServiceRequest.findByIdAndUpdate(id, { $set: { status } }, { new: true }).lean();
+    const updated = await ServiceRequest.findByIdAndUpdate(
+      req.params.id,
+      { $set: { status } },
+      { new: true }
+    ).lean();
     if (!updated) return res.status(404).json({ error: "درخواست پیدا نشد." });
-    res.json({ ok: true, status: updated.status });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get("/api/admin/stats", async (_req, res) => {
-  try {
-    const totalCustomers = await Customer.countDocuments();
-    const totalRequests  = await ServiceRequest.countDocuments();
-    const pendingCount   = await ServiceRequest.countDocuments({ status: "pending" });
-    res.json({ totalCustomers, totalRequests, pendingCount });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/* ---------------------- Admin: Customers ---------------------- */
-app.get("/api/admin/customers", async (_req, res) => {
-  try {
-    const list = await Customer.find().sort({ createdAt: -1 }).lean();
-    res.json(list);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch("/api/admin/customers/:id/discount", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const discountPercent = Math.max(0, Math.min(100, Number(req.body.discountPercent || 0)));
-    const updated = await Customer.findByIdAndUpdate(id, { $set: { discountPercent } }, { new: true }).lean();
-    if (!updated) return res.status(404).json({ error: "مشتری پیدا نشد" });
-    res.json({ ok: true, discountPercent: updated.discountPercent });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.json(updated);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 /* -------------------- 404 & Error handlers -------------------- */
-app.use((req, res) => res.status(404).json({ error: "Route not found", path: req.originalUrl }));
-app.use((err, _req, res, _next) => {
+app.use((req, res, next) => {
+  res.status(404).json({ error: "Route not found", path: req.originalUrl });
+});
+app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
 });
 
 /* ---------------------- Start server ---------------------- */
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Server listening on", PORT));
+app.listen(PORT, () => {
+  console.log("🚀 Server listening on", PORT);
+});
