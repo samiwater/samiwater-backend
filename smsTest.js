@@ -1,13 +1,11 @@
-// smsTest.js
+// smsTest.js -- بدون نیاز به node-fetch
 import { Router } from "express";
-import fetch from "node-fetch";
 
 const router = Router();
 
 /**
  * GET /test-sms?to=09xxxxxxxx&text=سلام
- * env باید باشه:
- * FARAZSMS_API_KEY  , FARAZSMS_SENDER
+ * env لازم: FARAZSMS_API_KEY , FARAZSMS_SENDER
  */
 router.get("/test-sms", async (req, res) => {
   try {
