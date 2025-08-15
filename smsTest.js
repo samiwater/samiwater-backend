@@ -1,30 +1,46 @@
-import express from "express";
-import axios from "axios";
+// smsTest.js
+import { Router } from "express";
+import fetch from "node-fetch";
 
-const router = express.Router();
+const router = Router();
 
-// روت تست برای ارسال پیامک
+/**
+ * GET /test-sms?to=09xxxxxxxxx&text=سلام
+ * از env این‌ها باید ست باشند:
+ * FARAZSMS_API_KEY , FARAZSMS_SENDER
+ */
 router.get("/test-sms", async (req, res) => {
   try {
-    const response = await axios.post(
-      "https://api2.ippanel.com/api/v1/sms/send",
-      {
-        sender: "+98PRO", // شماره خط فراز که انتخاب کردی
-        recipients: ["09xxxxxxxxx"], // شماره تست
-        message: "این یک پیام تستی از سامی واتر است ✅",
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": process.env.FARAZ_SMS_API_KEY, // همون کلیدی که تو Render گذاشتی
-        },
-      }
-    );
+    const apiKey = process.env.FARAZSMS_API_KEY;
+    const sender = process.env.FARAZSMS_SENDER;
+    const to = (req.query.to || "").trim();
+    const text = (req.query.text || "تست ارسال پیامک سامی‌واتر").trim();
 
-    res.json({ success: true, data: response.data });
-  } catch (error) {
-    console.error(error.response?.data || error.message);
-    res.status(500).json({ success: false, error: error.response?.data || error.message });
+    if (!apiKey || !sender) {
+      return res.status(500).json({ ok: false, error: "SMS env vars missing" });
+    }
+    if (!to) {
+      return res.status(400).json({ ok: false, error: "پارامتر to لازم است." });
+    }
+
+    const resp = await fetch("https://api.farazsms.com/v1/sms/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        sender, recipients: [to], message: text,
+      }),
+    });
+
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      return res.status(500).json({ ok: false, error: "SMS send failed", details: data });
+    }
+    res.json({ ok: true, provider: "farazsms", data });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
