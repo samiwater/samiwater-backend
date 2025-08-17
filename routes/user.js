@@ -1,114 +1,62 @@
 // routes/user.js
-const express = require('express');
+import express from "express";
+import Customer from "../models/Customer.js"; // بعدا این مدل رو می‌سازیم
+
 const router = express.Router();
-const Customer = require('../models/Customer');
-const ServiceRequest = require('../models/ServiceRequest');
-const { formatJalali } = require('../utils/jalali');
 
-// پروفایل کاربر (فعلاً بر اساس phone)
-router.get('/me', async (req, res) => {
+/**
+ * ثبت‌نام مشتری جدید
+ * POST /api/user/register
+ */
+router.post("/register", async (req, res) => {
   try {
-    const phone = req.query.phone;
-    if (!phone) return res.status(400).json({ ok: false, message: 'phone لازم است' });
+    const { fullName, phone, altPhone, address, city, birthday } = req.body;
 
-    const customer = await Customer.findOne({ phone });
-    if (!customer) return res.status(404).json({ ok: false, message: 'مشتری یافت نشد' });
-
-    return res.json({
-      ok: true,
-      data: {
-        id: customer._id,
-        fullName: customer.fullName,
-        phone: customer.phone,
-        altPhone: customer.altPhone,
-        address: customer.address,
-        city: customer.city,
-        birthDate: customer.birthDate || null,
-        createdAt: formatJalali(customer.createdAt)
-      }
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, message: 'خطا در پروفایل' });
-  }
-});
-
-// تاریخچه سرویس‌ها (از ServiceRequest)
-router.get('/history', async (req, res) => {
-  try {
-    const phone = req.query.phone;
-    if (!phone) return res.status(400).json({ ok: false, message: 'phone لازم است' });
-
-    const rows = await ServiceRequest.find({ 'snapshot.phone': phone })
-      .sort({ createdAt: -1 })
-      .limit(50);
-
-    const data = rows.map(r => ({
-      id: r._id,
-      invoiceCode: r.invoiceCode,
-      issueType: r.issueType,
-      status: r.status,
-      createdAt: formatJalali(r.createdAt),
-      scheduledAt: r.scheduledAt ? formatJalali(r.scheduledAt) : null
-    }));
-
-    res.json({ ok: true, data });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, message: 'خطا در تاریخچه' });
-  }
-});
-
-// امتیاز و تخفیف (فعلاً نمونه ثابت)
-router.get('/loyalty', async (req, res) => {
-  return res.json({
-    ok: true,
-    data: {
-      points: 230,
-      ledger: [
-        { date: '2025-04-08', delta: +50, reason: 'birthday' },
-        { date: '2025-05-01', delta: -30, reason: 'coupon_use' }
-      ]
+    if (!phone) {
+      return res.status(400).json({ ok: false, message: "شماره موبایل الزامی است" });
     }
-  });
-});
 
-// جشنواره‌ها (فعلاً نمونه ثابت)
-router.get('/promotions', async (req, res) => {
-  return res.json({
-    ok: true,
-    data: [
-      { id: 'p1', title: 'طرح تعویض فیلتر تابستانه', desc: '۱۰٪ تخفیف تا ۳۰ شهریور', until: '2025-09-20' }
-    ]
-  });
-});
+    // بررسی تکراری نبودن شماره
+    let existing = await Customer.findOne({ phone });
+    if (existing) {
+      return res.status(400).json({ ok: false, message: "این شماره قبلا ثبت شده است" });
+    }
 
-// درخواست تغییر مشخصات
-router.post('/change-request', async (req, res) => {
-  try {
-    const { phone, newData } = req.body;
-    if (!phone) return res.status(400).json({ ok: false, message: 'phone لازم است' });
+    const newCustomer = await Customer.create({
+      fullName,
+      phone,
+      altPhone,
+      address,
+      city,
+      birthday,
+      createdAt: new Date()
+    });
 
-    // اینجا بهتره درخواست تغییر رو توی یه کلکشن جدا ذخیره کنیم تا مدیر تأیید کنه
-    // فعلاً ساده برمی‌گردونیم
-    return res.json({ ok: true, message: 'درخواست تغییر ثبت شد', newData });
+    res.json({ ok: true, data: newCustomer });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, message: 'خطا در تغییر مشخصات' });
+    console.error("Register error:", err);
+    res.status(500).json({ ok: false, message: "خطای سرور" });
   }
 });
 
-// درخواست فوری
-router.post('/emergency', async (req, res) => {
+/**
+ * دریافت پروفایل مشتری
+ * GET /api/user/me/:phone
+ */
+router.get("/me/:phone", async (req, res) => {
   try {
-    const { phone } = req.body;
-    if (!phone) return res.status(400).json({ ok: false, message: 'phone لازم است' });
+    const { phone } = req.params;
+    const customer = await Customer.findOne({ phone });
 
-    return res.json({ ok: true, ticketId: 'EMG-' + Date.now() });
+    if (!customer) {
+      return res.status(404).json({ ok: false, message: "کاربر یافت نشد" });
+    }
+
+    res.json({ ok: true, data: customer });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, message: 'خطا در ثبت اضطراری' });
+    console.error("Fetch user error:", err);
+    res.status(500).json({ ok: false, message: "خطای سرور" });
   }
 });
 
-module.exports = router;
+export default router;
