@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 
 // Routes
 import requestsRouter from "./routes/requests.js";
+import userRouter from "./routes/user.js";
 import smsTestRouter from "./smsTest.js"; // ⬅️ روتر تست پیامک
 
 dotenv.config();
@@ -58,6 +59,7 @@ app.get("/api/test", dbTestHandler);
 
 // روت‌های اصلی سامانه
 app.use("/api", requestsRouter);
+app.use("/api/user", userRouter);
 
 // ⬇️ روتر تست پیامک (بدون prefix) تا لینک مستقیم کار کند
 app.use(smsTestRouter);
