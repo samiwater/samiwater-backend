@@ -3,10 +3,7 @@ import mongoose from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 
-// Routes
-import requestsRouter from "./routes/requests.js";
-import userRouter from "./routes/user.js";
-import smsTestRouter from "./smsTest.js"; // ⬅️ روتر تست پیامک
+import smsTestRouter from "./smsTest.js"; // ← مسیر تست پیامک
 
 dotenv.config();
 
@@ -23,9 +20,9 @@ app.use(
 app.use(express.json({ limit: "1mb" }));
 
 /* --------------------- MongoDB connect --------------------- */
-const MONGODB_URI = process.env.MONGODB_URI;
+const MONGODB_URI = process.env.MONGODB_URI || "";
 if (!MONGODB_URI) {
-  console.error("❌ MONGODB_URI is missing. Put it in .env or Render env vars.");
+  console.error("❌ MONGODB_URI is missing. Put it in env vars.");
 }
 mongoose
   .connect(MONGODB_URI, {
@@ -37,38 +34,21 @@ mongoose
   .then(() => console.log("✅ MongoDB connected"))
   .catch((e) => console.error("❌ MongoDB error:", e.message));
 
-/* ------------------------- Routes ------------------------- */
+/* --------------------- Health & Root ---------------------- */
 app.get("/", (req, res) => {
   res.send("SamiWater Backend is running ✅");
 });
-
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, status: "SamiWater API is healthy" });
+  res.json({ ok: true });
 });
 
-// تست اتصال DB
-const dbTestHandler = async (req, res) => {
-  try {
-    await mongoose.connection.db.admin().ping();
-    res.json({ ok: true, message: "Database connected successfully!" });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: "Database connection failed", details: String(error) });
-  }
-};
-app.get("/api/test", dbTestHandler);
-
-// روت‌های اصلی سامانه
-app.use("/api", requestsRouter);
-app.use("/api/user", userRouter);
-
-// ⬇️ روتر تست پیامک (بدون prefix) تا لینک مستقیم کار کند
-app.use(smsTestRouter);
+/* ---------------------- Mount Routes ---------------------- */
+app.use("/api", smsTestRouter); // ← نتیجه: /api/test-sms
 
 /* -------------------- 404 & Error handlers -------------------- */
 app.use((req, res, next) => {
   res.status(404).json({ error: "Route not found", path: req.originalUrl });
 });
-
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
