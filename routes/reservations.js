@@ -1,4 +1,3 @@
-// routes/reservations.js (ESM)
 import express from "express";
 import Reservation from "../models/Reservation.js";
 
@@ -19,7 +18,7 @@ function daysBetweenUTC(startStr, endStr) {
   return Math.round((e - s) / (24 * 3600 * 1000));
 }
 
-// POST /reservations → ایجاد رزرو و قفل‌کردن اسلات
+// POST /reservations
 router.post("/", async (req, res) => {
   try {
     const { customerId, serviceType, details, date, window, source } = req.body;
@@ -30,7 +29,6 @@ router.post("/", async (req, res) => {
     if (!isValidDateStr(date)) return res.status(400).json({ error: "date must be YYYY-MM-DD" });
     if (!VALID_WINDOWS.includes(window)) return res.status(400).json({ error: "Invalid window" });
 
-    // فقط امروز تا 30 روز آینده
     const start = todayTehranISO();
     const diff = daysBetweenUTC(start, date);
     if (diff < 0 || diff > 30) {
@@ -58,7 +56,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /reservations/availability?date=YYYY-MM-DD → اسلات‌های آزاد/پر
+// GET /reservations/availability?date=YYYY-MM-DD
 router.get("/availability", async (req, res) => {
   try {
     const { date } = req.query;
@@ -83,7 +81,7 @@ router.get("/availability", async (req, res) => {
   }
 });
 
-// PATCH /reservations/:id/confirm → تایید (قفل می‌ماند)
+// PATCH /reservations/:id/confirm
 router.patch("/:id/confirm", async (req, res) => {
   try {
     const { id } = req.params;
@@ -91,15 +89,12 @@ router.patch("/:id/confirm", async (req, res) => {
     if (!doc) return res.status(404).json({ error: "Not found" });
     res.json(doc);
   } catch (err) {
-    if (err && err.code === 11000) {
-      return res.status(409).json({ error: "Selected slot conflicts with another reservation." });
-    }
     console.error("PATCH /reservations/:id/confirm error", err);
     res.status(500).json({ error: "Internal error" });
   }
 });
 
-// PATCH /reservations/:id/cancel → آزادکردن اسلات
+// PATCH /reservations/:id/cancel
 router.patch("/:id/cancel", async (req, res) => {
   try {
     const { id } = req.params;
@@ -112,4 +107,4 @@ router.patch("/:id/cancel", async (req, res) => {
   }
 });
 
-export default router
+export default router;
