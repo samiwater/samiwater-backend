@@ -1,4 +1,4 @@
-// models/Reservation.js
+// models/Reservation.js (ESM)
 import mongoose from "mongoose";
 
 const ReservationSchema = new mongoose.Schema(
