@@ -1,5 +1,5 @@
 // models/Reservation.js
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const ReservationSchema = new mongoose.Schema(
   {
@@ -7,7 +7,7 @@ const ReservationSchema = new mongoose.Schema(
     serviceType: { type: String, required: true },
     details: { type: String },
 
-    // تاریخ میلادی به صورت YYYY-MM-DD (بر اساس Asia/Tehran)
+    // تاریخ میلادی YYYY-MM-DD (بر اساس Asia/Tehran)
     date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
 
     // بازه‌های 2ساعته از 9 تا 21
@@ -28,7 +28,6 @@ const ReservationSchema = new mongoose.Schema(
 
     timezone: { type: String, default: "Asia/Tehran" },
 
-    // بعداً با تایید نهایی پر میشه (اختیاری)
     assigned: {
       technicianId: { type: mongoose.Schema.Types.ObjectId, ref: "Technician" },
       note: { type: String },
@@ -37,7 +36,7 @@ const ReservationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// قفل‌کردن هر (date, window) برای رزروهای فعال (pending/confirmed)
+// فقط یک رزرو فعال برای هر (date, window)
 ReservationSchema.index(
   { date: 1, window: 1 },
   {
@@ -47,4 +46,5 @@ ReservationSchema.index(
   }
 );
 
-module.exports = mongoose.model("Reservation", ReservationSchema);
+const Reservation = mongoose.model("Reservation", ReservationSchema);
+export default Reservation;
