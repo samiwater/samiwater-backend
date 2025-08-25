@@ -1,15 +1,11 @@
-// src/index.js — SamiWater backend (ESM)
-// - تست SMS/OTP مثل قبل
-// - رزرو بازه‌های 2ساعته (09–21)
-// - اتصال به MongoDB و ساخت ایندکس یونیک اسلات‌ها
+// index.js — SamiWater backend (ESM)
 
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 
-// چون این فایل داخل src/ است و routes/ بیرون از src/ قرار دارد:
-import reservationsRouter from "../routes/reservations.js";
+import reservationsRouter from "./routes/reservations.js"; // چون routes کنار index.js است
 
 dotenv.config();
 
@@ -28,7 +24,7 @@ if (!MONGODB_URI) {
   process.exit(1);
 }
 
-// ======= MongoDB (top-level await مجاز است)
+// ======= MongoDB
 await mongoose.connect(MONGODB_URI, { autoIndex: true }).catch((e) => {
   console.error("❌ Mongo connect error:", e);
   process.exit(1);
@@ -48,8 +44,8 @@ async function sendSms(to, text) {
         "x-api-key": FARAZ_API_KEY,
       },
       body: JSON.stringify({
-        sender: FARAZ_SENDER, // مثل +98... یا شناسه فرستنده
-        recipients: to,       // 09xxxxxxxxx
+        sender: FARAZ_SENDER,
+        recipients: to,
         message: text,
       }),
     });
@@ -71,8 +67,8 @@ app.get("/test-sms", async (req, res) => {
   res.status(code).json(r);
 });
 
-// ======= OTP ساده (in-memory) برای تست
-const otpStore = new Map(); // key: phone, value: { code, exp }
+// ======= OTP ساده (in-memory)
+const otpStore = new Map();
 function genCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
@@ -82,7 +78,7 @@ app.get("/auth/request-otp", async (req, res) => {
   if (!phone) return res.status(400).json({ ok: false, error: "missing phone" });
 
   const code = genCode();
-  const exp = Date.now() + 2 * 60 * 1000; // 2 دقیقه
+  const exp = Date.now() + 2 * 60 * 1000;
   otpStore.set(phone, { code, exp });
 
   const smsText = `کد تایید شما: ${code}\nSamiWater`;
@@ -99,7 +95,7 @@ app.get("/auth/verify-otp", (req, res) => {
   if (Date.now() > item.exp) return res.status(400).json({ ok: false, error: "expired" });
   if (item.code !== code) return res.status(400).json({ ok: false, error: "invalid" });
 
-  const ADMIN_PHONE = "09384129843"; // دلخواه
+  const ADMIN_PHONE = "09384129843";
   const role = phone === ADMIN_PHONE ? "admin" : "user";
   otpStore.delete(phone);
   res.json({ ok: true, role });
@@ -110,7 +106,7 @@ app.get("/", (req, res) => {
   res.json({ ok: true, service: "SamiWater backend is up", tz: process.env.TZ || "unset" });
 });
 
-// ======= رزرو بازه‌های 2ساعته (09–21)
+// ======= رزرو
 app.use("/reservations", reservationsRouter);
 
 // ======= Start
