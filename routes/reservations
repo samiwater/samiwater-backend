@@ -1,0 +1,117 @@
+// routes/reservations.js
+const express = require("express");
+const router = express.Router();
+const Reservation = require("../models/Reservation");
+
+const VALID_WINDOWS = ["09-11", "11-13", "13-15", "15-17", "17-19", "19-21"];
+
+function isValidDateStr(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function todayTehranISO() {
+  const now = new Date();
+  const [y, m, d] = now.toLocaleDateString("en-CA", { timeZone: "Asia/Tehran" }).split("-");
+  return `${y}-${m}-${d}`; // YYYY-MM-DD
+}
+
+function daysBetweenUTC(startStr, endStr) {
+  const s = new Date(startStr + "T00:00:00Z");
+  const e = new Date(endStr + "T00:00:00Z");
+  return Math.round((e - s) / (24 * 3600 * 1000));
+}
+
+// POST /reservations  → ایجاد رزرو و قفل‌کردن اسلات
+router.post("/", async (req, res) => {
+  try {
+    const { customerId, serviceType, details, date, window, source } = req.body;
+
+    if (!customerId || !serviceType || !date || !window) {
+      return res.status(400).json({ error: "customerId, serviceType, date, window are required" });
+    }
+    if (!isValidDateStr(date)) return res.status(400).json({ error: "date must be YYYY-MM-DD" });
+    if (!VALID_WINDOWS.includes(window)) return res.status(400).json({ error: "Invalid window" });
+
+    // فقط امروز تا 30 روز آینده
+    const start = todayTehranISO();
+    const diff = daysBetweenUTC(start, date);
+    if (diff < 0 || diff > 30) {
+      return res.status(400).json({ error: "Date must be within the next 30 days." });
+    }
+
+    const doc = await Reservation.create({
+      customerId,
+      serviceType,
+      details,
+      date,
+      window,
+      source: source || "self",
+      status: "pending",
+      timezone: "Asia/Tehran",
+    });
+
+    res.status(201).json(doc);
+  } catch (err) {
+    if (err && err.code === 11000) {
+      return res.status(409).json({ error: "This time window is no longer available for that date." });
+    }
+    console.error("POST /reservations error", err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// GET /reservations/availability?date=YYYY-MM-DD  → لیست اسلات‌های آزاد/پر
+router.get("/availability", async (req, res) => {
+  try {
+    const { date } = req.query;
+    if (!date || !isValidDateStr(date)) {
+      return res.status(400).json({ error: "date query param YYYY-MM-DD required" });
+    }
+
+    const taken = await Reservation.find({
+      date,
+      status: { $in: ["pending", "confirmed"] },
+    })
+      .select("window -_id")
+      .lean();
+
+    const takenSet = new Set(taken.map((t) => t.window));
+    const slots = VALID_WINDOWS.map((w) => ({ window: w, available: !takenSet.has(w) }));
+
+    res.json({ date, slots });
+  } catch (err) {
+    console.error("GET /reservations/availability error", err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// PATCH /reservations/:id/confirm  → تایید (اسلات همچنان قفل)
+router.patch("/:id/confirm", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doc = await Reservation.findByIdAndUpdate(id, { status: "confirmed" }, { new: true });
+    if (!doc) return res.status(404).json({ error: "Not found" });
+    res.json(doc);
+  } catch (err) {
+    if (err && err.code === 11000) {
+      return res.status(409).json({ error: "Selected slot conflicts with another reservation." });
+    }
+    console.error("PATCH /reservations/:id/confirm error", err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// PATCH /reservations/:id/cancel  → آزادکردن اسلات
+router.patch("/:id/cancel", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doc = await Reservation.findByIdAndUpdate(id, { status: "cancelled" }, { new: true });
+    if (!doc) return res.status(404).json({ error: "Not found" });
+    res.json(doc);
+  } catch (err) {
+    console.error("PATCH /reservations/:id/cancel error", err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+module.exports = router;
