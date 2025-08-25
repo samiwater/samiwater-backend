@@ -1,27 +1,25 @@
 // routes/reservations.js
-const express = require("express");
-const router = express.Router();
-const Reservation = require("../models/Reservation");
+import express from "express";
+import Reservation from "../models/Reservation.js";
 
+const router = express.Router();
 const VALID_WINDOWS = ["09-11", "11-13", "13-15", "15-17", "17-19", "19-21"];
 
 function isValidDateStr(s) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
-
 function todayTehranISO() {
   const now = new Date();
   const [y, m, d] = now.toLocaleDateString("en-CA", { timeZone: "Asia/Tehran" }).split("-");
-  return `${y}-${m}-${d}`; // YYYY-MM-DD
+  return `${y}-${m}-${d}`;
 }
-
 function daysBetweenUTC(startStr, endStr) {
   const s = new Date(startStr + "T00:00:00Z");
   const e = new Date(endStr + "T00:00:00Z");
   return Math.round((e - s) / (24 * 3600 * 1000));
 }
 
-// POST /reservations  → ایجاد رزرو و قفل‌کردن اسلات
+// POST /reservations → ایجاد رزرو و قفل‌کردن اسلات
 router.post("/", async (req, res) => {
   try {
     const { customerId, serviceType, details, date, window, source } = req.body;
@@ -60,7 +58,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /reservations/availability?date=YYYY-MM-DD  → لیست اسلات‌های آزاد/پر
+// GET /reservations/availability?date=YYYY-MM-DD → اسلات‌های آزاد/پر
 router.get("/availability", async (req, res) => {
   try {
     const { date } = req.query;
@@ -85,7 +83,7 @@ router.get("/availability", async (req, res) => {
   }
 });
 
-// PATCH /reservations/:id/confirm  → تایید (اسلات همچنان قفل)
+// PATCH /reservations/:id/confirm → تایید (قفل می‌ماند)
 router.patch("/:id/confirm", async (req, res) => {
   try {
     const { id } = req.params;
@@ -101,7 +99,7 @@ router.patch("/:id/confirm", async (req, res) => {
   }
 });
 
-// PATCH /reservations/:id/cancel  → آزادکردن اسلات
+// PATCH /reservations/:id/cancel → آزادکردن اسلات
 router.patch("/:id/cancel", async (req, res) => {
   try {
     const { id } = req.params;
@@ -114,4 +112,4 @@ router.patch("/:id/cancel", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
