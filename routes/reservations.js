@@ -1,4 +1,4 @@
-// routes/reservations.js
+// routes/reservations.js (ESM)
 import express from "express";
 import Reservation from "../models/Reservation.js";
 
@@ -112,4 +112,4 @@ router.patch("/:id/cancel", async (req, res) => {
   }
 });
 
-export default router;
+export default router
