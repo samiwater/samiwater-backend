@@ -1,5 +1,5 @@
-// index.js — SamiWater backend (ESM)
-// - SMS/OTP تست مثل قبل
+// src/index.js — SamiWater backend (ESM)
+// - تست SMS/OTP مثل قبل
 // - رزرو بازه‌های 2ساعته (09–21)
 // - اتصال به MongoDB و ساخت ایندکس یونیک اسلات‌ها
 
@@ -8,7 +8,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 
-import reservationsRouter from "./routes/reservations.js"; // NEW
+// چون این فایل داخل src/ است و routes/ بیرون از src/ قرار دارد:
+import reservationsRouter from "../routes/reservations.js";
 
 dotenv.config();
 
@@ -22,13 +23,12 @@ const FARAZ_SENDER = process.env.FARAZSMS_SENDER || "";
 const MONGODB_URI = process.env.MONGODB_URI || "";
 const PORT = process.env.PORT || 10000;
 
-// ======= MongoDB
 if (!MONGODB_URI) {
   console.error("❌ MONGODB_URI is required");
   process.exit(1);
 }
 
-// اتصال و ساخت ایندکس‌ها (برای قفل‌کردن بازه‌ها)
+// ======= MongoDB (top-level await مجاز است)
 await mongoose.connect(MONGODB_URI, { autoIndex: true }).catch((e) => {
   console.error("❌ Mongo connect error:", e);
   process.exit(1);
@@ -110,11 +110,11 @@ app.get("/", (req, res) => {
   res.json({ ok: true, service: "SamiWater backend is up", tz: process.env.TZ || "unset" });
 });
 
-// ======= رزرو بازه‌های 2ساعته (09–21) — NEW
+// ======= رزرو بازه‌های 2ساعته (09–21)
 app.use("/reservations", reservationsRouter);
 
 // ======= Start
 app.listen(PORT, () => {
   console.log(`🚀 Server listening on ${PORT}`);
-  console.log("🕒 TZ hint:", process.env.TZ || "TZ not set (recommend TZ=Asia/Tehran)");
+  console.log("🕒 TZ:", process.env.TZ || "unset (recommend TZ=Asia/Tehran)");
 });
